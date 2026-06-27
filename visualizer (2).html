@@ -1,0 +1,1029 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Pipeline Stall Analyzer</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;700;800&display=swap');
+
+  :root {
+    --bg: #0a0c10;
+    --bg2: #10141c;
+    --bg3: #161b26;
+    --border: #1e2535;
+    --text: #c8d0e0;
+    --muted: #556070;
+    --accent: #4fffb0;
+    --accent2: #ff6b6b;
+    --accent3: #ffd166;
+    --accent4: #74b9ff;
+    --fwd-color: #4fffb0;
+    --stall-color: #ff6b6b;
+    --ctrl-color: #ffd166;
+    --mem-color: #74b9ff;
+    --load-color: #e879f9;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'JetBrains Mono', monospace;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ── Header ── */
+  header {
+    padding: 32px 40px 24px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    background: var(--bg);
+    z-index: 100;
+  }
+
+  .logo {
+    font-family: 'Syne', sans-serif;
+    font-size: 20px;
+    font-weight: 800;
+    color: var(--accent);
+    letter-spacing: -0.5px;
+  }
+  .logo span { color: var(--text); }
+
+  .load-btn {
+    background: transparent;
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    padding: 8px 20px;
+    cursor: pointer;
+    transition: all 0.2s;
+    letter-spacing: 1px;
+  }
+  .load-btn:hover { background: var(--accent); color: var(--bg); }
+
+  /* ── Landing ── */
+  #landing {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 70vh;
+    gap: 24px;
+    text-align: center;
+    padding: 40px;
+  }
+  #landing h1 {
+    font-family: 'Syne', sans-serif;
+    font-size: clamp(36px, 6vw, 72px);
+    font-weight: 800;
+    line-height: 1;
+    color: #fff;
+  }
+  #landing h1 em { color: var(--accent); font-style: normal; }
+  #landing p { color: var(--muted); max-width: 480px; font-size: 13px; line-height: 1.7; }
+
+  .drop-area {
+    width: 100%;
+    max-width: 520px;
+    border: 1px dashed var(--border);
+    padding: 40px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .drop-area:hover { border-color: var(--accent); color: var(--accent); }
+  .drop-area .icon { font-size: 32px; margin-bottom: 12px; }
+
+  .load-pair-btn {
+    background: var(--accent);
+    color: var(--bg);
+    border: none;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    font-weight: 700;
+    padding: 14px 32px;
+    cursor: pointer;
+    transition: all 0.2s;
+    letter-spacing: 1px;
+    width: 100%;
+    max-width: 520px;
+  }
+  .load-pair-btn:hover { transform: translateY(-2px); box-shadow: 0 8px 32px rgba(79,255,176,0.2); }
+
+  input[type=file] { display: none; }
+
+  /* ── Main content ── */
+  #main { display: none; }
+
+  .container { max-width: 1400px; margin: 0 auto; padding: 0 40px; }
+
+  /* ── Mode tabs ── */
+  .tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--border);
+    padding: 0 40px;
+    margin-bottom: 0;
+  }
+  .tab {
+    padding: 16px 28px;
+    font-size: 12px;
+    letter-spacing: 1px;
+    cursor: pointer;
+    color: var(--muted);
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s;
+    user-select: none;
+  }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .tab:hover:not(.active) { color: var(--text); }
+
+  /* ── Comparison Hero ── */
+  #tab-compare .hero-grid {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    gap: 24px;
+    padding: 40px;
+    align-items: center;
+  }
+
+  .hero-card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    padding: 28px;
+    position: relative;
+  }
+  .hero-card.with-fwd { border-color: rgba(79,255,176,0.3); }
+  .hero-card.without-fwd { border-color: rgba(255,107,107,0.3); }
+
+  .hero-card .tag {
+    font-size: 10px;
+    letter-spacing: 2px;
+    color: var(--muted);
+    margin-bottom: 16px;
+  }
+  .hero-card.with-fwd .tag { color: var(--accent); }
+  .hero-card.without-fwd .tag { color: var(--accent2); }
+
+  .metric-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .metric-row:last-child { border-bottom: none; }
+  .metric-label { font-size: 11px; color: var(--muted); }
+  .metric-val { font-size: 20px; font-weight: 700; font-family: 'Syne', sans-serif; }
+  .metric-val.green { color: var(--accent); }
+  .metric-val.red { color: var(--accent2); }
+  .metric-val.neutral { color: var(--text); }
+
+  .vs-block {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+  }
+  .vs-label {
+    font-family: 'Syne', sans-serif;
+    font-size: 48px;
+    font-weight: 800;
+    color: var(--muted);
+  }
+  .speedup-badge {
+    background: var(--accent);
+    color: var(--bg);
+    padding: 8px 16px;
+    font-weight: 700;
+    font-size: 14px;
+    text-align: center;
+  }
+  .speedup-sub { font-size: 10px; letter-spacing: 1px; margin-top: 2px; opacity: 0.7; }
+
+  /* ── Savings callout ── */
+  .savings-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    padding: 0 40px 40px;
+  }
+  .saving-card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    padding: 20px 24px;
+    border-left: 3px solid var(--accent);
+  }
+  .saving-card .s-val {
+    font-family: 'Syne', sans-serif;
+    font-size: 32px;
+    font-weight: 800;
+    color: var(--accent);
+    line-height: 1;
+  }
+  .saving-card .s-label { font-size: 11px; color: var(--muted); margin-top: 6px; letter-spacing: 0.5px; }
+
+  /* ── Charts section ── */
+  .charts-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+    padding: 0 40px 40px;
+  }
+  .chart-card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    padding: 24px;
+  }
+  .chart-title {
+    font-size: 11px;
+    letter-spacing: 2px;
+    color: var(--muted);
+    margin-bottom: 20px;
+    text-transform: uppercase;
+  }
+
+  /* ── Stall breakdown bars ── */
+  .breakdown-chart { display: flex; flex-direction: column; gap: 14px; }
+  .bar-row { display: flex; align-items: center; gap: 12px; }
+  .bar-label { font-size: 11px; color: var(--muted); width: 160px; flex-shrink: 0; }
+  .bar-track { flex: 1; background: var(--border); height: 24px; position: relative; overflow: hidden; }
+  .bar-fill {
+    height: 100%;
+    transition: width 0.8s cubic-bezier(.23,1,.32,1);
+  }
+  .bar-fill.fwd { background: var(--fwd-color); }
+  .bar-fill.stall { background: var(--stall-color); }
+  .bar-fill.ctrl { background: var(--ctrl-color); }
+  .bar-fill.mem { background: var(--mem-color); }
+  .bar-fill.load { background: var(--load-color); }
+  .bar-val { font-size: 12px; font-weight: 700; width: 70px; text-align: right; flex-shrink: 0; }
+
+  /* ── Forwarding diagram ── */
+  .fwd-diagram-wrap { position: relative; }
+
+  /* ── CPI comparison bar ── */
+  .cpi-compare {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .cpi-row { display: flex; flex-direction: column; gap: 6px; }
+  .cpi-header { display: flex; justify-content: space-between; font-size: 11px; }
+  .cpi-label { color: var(--muted); }
+  .cpi-val { font-weight: 700; }
+  .cpi-track { background: var(--border); height: 32px; position: relative; }
+  .cpi-fill { height: 100%; transition: width 1s cubic-bezier(.23,1,.32,1); }
+  .cpi-fill.with { background: linear-gradient(90deg, var(--accent), rgba(79,255,176,0.5)); }
+  .cpi-fill.without { background: linear-gradient(90deg, var(--accent2), rgba(255,107,107,0.5)); }
+  .cpi-improvement {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px;
+    background: rgba(79,255,176,0.05);
+    border: 1px solid rgba(79,255,176,0.2);
+    font-size: 12px;
+  }
+  .cpi-improvement .arrow { font-size: 20px; color: var(--accent); }
+
+  /* ── Forwarding pipeline diagram ── */
+  .pipeline-svg-wrap { overflow-x: auto; }
+  svg.pipeline { font-family: 'JetBrains Mono', monospace; }
+
+  /* ── Instruction log tab ── */
+  .log-controls {
+    display: flex;
+    gap: 12px;
+    padding: 24px 40px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .filter-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    padding: 6px 14px;
+    cursor: pointer;
+    transition: all 0.15s;
+    letter-spacing: 0.5px;
+  }
+  .filter-btn.active { border-color: var(--accent); color: var(--accent); }
+  .filter-btn:hover:not(.active) { color: var(--text); border-color: var(--text); }
+
+  .log-table-wrap { padding: 0 40px 40px; overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th {
+    text-align: left;
+    padding: 10px 14px;
+    font-size: 10px;
+    letter-spacing: 1.5px;
+    color: var(--muted);
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 57px;
+    background: var(--bg);
+    z-index: 10;
+  }
+  td {
+    padding: 9px 14px;
+    border-bottom: 1px solid rgba(30,37,53,0.5);
+    font-size: 11px;
+  }
+  tr:hover td { background: var(--bg2); }
+  tr.has-stall td { border-left: 2px solid var(--stall-color); }
+  tr.has-fwd td { border-left: 2px solid var(--fwd-color); }
+  tr.has-ctrl td { border-left: 2px solid var(--ctrl-color); }
+  tr.has-load td { border-left: 2px solid var(--load-color); }
+
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    border-radius: 2px;
+  }
+  .badge.fwd { background: rgba(79,255,176,0.15); color: var(--fwd-color); }
+  .badge.stall { background: rgba(255,107,107,0.15); color: var(--stall-color); }
+  .badge.ctrl { background: rgba(255,209,102,0.15); color: var(--ctrl-color); }
+  .badge.mem { background: rgba(116,185,255,0.15); color: var(--mem-color); }
+  .badge.load { background: rgba(232,121,249,0.15); color: var(--load-color); }
+
+  /* ── Forwarding Explainer tab ── */
+  .explainer { padding: 40px; }
+  .explainer h2 {
+    font-family: 'Syne', sans-serif;
+    font-size: 28px;
+    font-weight: 800;
+    color: #fff;
+    margin-bottom: 12px;
+  }
+  .explainer p { color: var(--muted); font-size: 12px; line-height: 1.8; max-width: 700px; margin-bottom: 32px; }
+
+  .pipeline-demo { background: var(--bg2); border: 1px solid var(--border); padding: 32px; margin-bottom: 32px; overflow-x: auto; }
+  .pipeline-demo h3 { font-size: 11px; letter-spacing: 2px; color: var(--muted); margin-bottom: 24px; text-transform: uppercase; }
+
+  .stage-legend {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+    margin-bottom: 20px;
+  }
+  .legend-item { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
+  .legend-dot { width: 10px; height: 10px; }
+
+  /* ── Tab content areas ── */
+  .tab-pane { display: none; }
+  .tab-pane.active { display: block; }
+
+  /* ── Scrollbar ── */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); }
+  ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+
+  /* ── Anim ── */
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(16px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .fade-up { animation: fadeUp 0.5s ease both; }
+  .fade-up-2 { animation: fadeUp 0.5s 0.1s ease both; }
+  .fade-up-3 { animation: fadeUp 0.5s 0.2s ease both; }
+  .fade-up-4 { animation: fadeUp 0.5s 0.3s ease both; }
+
+  .section-gap { margin-bottom: 0; }
+
+  /* numeric highlight */
+  .hl { color: #fff; font-weight: 700; }
+  .hl.g { color: var(--accent); }
+  .hl.r { color: var(--accent2); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">PIPELINE<span>.ANALYZE</span></div>
+  <button class="load-btn" onclick="document.getElementById('fileInput').click()">LOAD JSON FILES</button>
+  <input type="file" id="fileInput" accept=".json" multiple onchange="handleFiles(event)"/>
+</header>
+
+<!-- Landing -->
+<div id="landing">
+  <h1>Pipeline <em>Stall</em><br/>Analyzer</h1>
+  <p>Load your <code>results.json</code> (with forwarding) and <code>without_forwarding.json</code> to compare CPI, stall breakdown, and see exactly how much forwarding saves.</p>
+
+  <div class="drop-area" onclick="document.getElementById('fileInput').click()">
+    <div class="icon">📂</div>
+    <div>Click to select JSON files</div>
+    <div style="margin-top:8px;font-size:11px;opacity:0.5">results.json + without_forwarding.json</div>
+  </div>
+
+  <button class="load-pair-btn" onclick="loadDemo()">▶ LOAD DEMO DATA (from your run)</button>
+</div>
+
+<!-- Main dashboard -->
+<div id="main">
+  <div class="tabs">
+    <div class="tab active" onclick="switchTab('compare')">COMPARISON</div>
+    <div class="tab" onclick="switchTab('forwarding')">FORWARDING PATHS</div>
+    <div class="tab" onclick="switchTab('log')">INSTRUCTION LOG</div>
+  </div>
+
+  <!-- TAB: COMPARE -->
+  <div class="tab-pane active" id="tab-compare">
+    <!-- Hero -->
+    <div class="hero-grid fade-up">
+      <div class="hero-card without-fwd">
+        <div class="tag">WITHOUT FORWARDING</div>
+        <div class="metric-row">
+          <span class="metric-label">CPI</span>
+          <span class="metric-val red" id="cpi-wf">—</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-label">Total Cycles</span>
+          <span class="metric-val red" id="cycles-wf">—</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-label">Data Stalls</span>
+          <span class="metric-val red" id="dstalls-wf">—</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-label">Load-Use Stalls</span>
+          <span class="metric-val neutral" id="lustalls-wf">—</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-label">Control Stalls</span>
+          <span class="metric-val neutral" id="cstalls-wf">—</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-label">Total Stalls</span>
+          <span class="metric-val red" id="tstalls-wf">—</span>
+        </div>
+      </div>
+
+      <div class="vs-block">
+        <div class="vs-label">VS</div>
+        <div class="speedup-badge">
+          <div id="speedup-val">—×</div>
+          <div class="speedup-sub">FASTER WITH FWD</div>
+        </div>
+        <div style="font-size:11px;color:var(--muted);text-align:center;margin-top:8px;">
+          <span id="saved-cycles-mini">—</span> cycles saved
+        </div>
+      </div>
+
+      <div class="hero-card with-fwd">
+        <div class="tag">WITH FORWARDING ✦</div>
+        <div class="metric-row">
+          <span class="metric-label">CPI</span>
+          <span class="metric-val green" id="cpi-wt">—</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-label">Total Cycles</span>
+          <span class="metric-val green" id="cycles-wt">—</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-label">Data Stalls</span>
+          <span class="metric-val green" id="dstalls-wt">—</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-label">Load-Use Stalls</span>
+          <span class="metric-val neutral" id="lustalls-wt">—</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-label">Control Stalls</span>
+          <span class="metric-val neutral" id="cstalls-wt">—</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-label">Forwarding Events</span>
+          <span class="metric-val green" id="fwd-events">—</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Savings row -->
+    <div class="savings-row fade-up-2">
+      <div class="saving-card">
+        <div class="s-val" id="save-stalls">—</div>
+        <div class="s-label">DATA STALLS ELIMINATED</div>
+      </div>
+      <div class="saving-card">
+        <div class="s-val" id="save-cycles">—</div>
+        <div class="s-label">CYCLES SAVED</div>
+      </div>
+      <div class="saving-card">
+        <div class="s-val" id="save-cpi">—</div>
+        <div class="s-label">CPI REDUCTION</div>
+      </div>
+      <div class="saving-card">
+        <div class="s-val" id="save-pct">—%</div>
+        <div class="s-label">RUNTIME IMPROVEMENT</div>
+      </div>
+    </div>
+
+    <!-- Charts -->
+    <div class="charts-grid fade-up-3">
+      <!-- CPI compare -->
+      <div class="chart-card">
+        <div class="chart-title">CPI Comparison</div>
+        <div class="cpi-compare">
+          <div class="cpi-row">
+            <div class="cpi-header">
+              <span class="cpi-label">Without Forwarding</span>
+              <span class="cpi-val" style="color:var(--accent2)" id="cpi-wf2">—</span>
+            </div>
+            <div class="cpi-track">
+              <div class="cpi-fill without" id="bar-cpi-wf" style="width:0%"></div>
+            </div>
+          </div>
+          <div class="cpi-row">
+            <div class="cpi-header">
+              <span class="cpi-label">With Forwarding</span>
+              <span class="cpi-val" style="color:var(--accent)" id="cpi-wt2">—</span>
+            </div>
+            <div class="cpi-track">
+              <div class="cpi-fill with" id="bar-cpi-wt" style="width:0%"></div>
+            </div>
+          </div>
+          <div class="cpi-improvement">
+            <span class="arrow">↓</span>
+            <span id="cpi-improv-text">—</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Stall breakdown -->
+      <div class="chart-card">
+        <div class="chart-title">Stall Type Breakdown (with fwd)</div>
+        <div class="breakdown-chart" id="stall-breakdown"></div>
+      </div>
+
+      <!-- Data stall comparison -->
+      <div class="chart-card">
+        <div class="chart-title">Data Stalls — Before vs After Forwarding</div>
+        <div class="breakdown-chart" id="datastall-compare"></div>
+      </div>
+
+      <!-- Memory + misc -->
+      <div class="chart-card">
+        <div class="chart-title">Execution Profile</div>
+        <div class="breakdown-chart" id="profile-chart"></div>
+      </div>
+    </div>
+  </div><!-- /tab-compare -->
+
+  <!-- TAB: FORWARDING PATHS -->
+  <div class="tab-pane" id="tab-forwarding">
+    <div class="explainer">
+      <h2>What is Forwarding?</h2>
+      <p>
+        In a 5-stage pipeline (IF → ID → EX → MEM → WB), a RAW hazard occurs when
+        an instruction needs a register that the previous instruction hasn't written yet.
+        <strong style="color:#fff">Without forwarding</strong>, the pipeline must stall (insert bubbles) until the value
+        is written back to the register file — up to 3 cycles wasted.
+        <strong style="color:var(--accent)">With forwarding</strong>, the result is forwarded directly from the EX or MEM
+        stage output to the EX stage input of the dependent instruction — <em>0 extra stalls</em>
+        (except load-use which still needs 1 cycle).
+      </p>
+
+      <div class="pipeline-demo">
+        <h3>EX→EX Forwarding — stall eliminated</h3>
+        <div class="stage-legend">
+          <div class="legend-item"><div class="legend-dot" style="background:#334155"></div>Empty slot</div>
+          <div class="legend-item"><div class="legend-dot" style="background:var(--accent4)"></div>IF</div>
+          <div class="legend-item"><div class="legend-dot" style="background:var(--accent3)"></div>ID</div>
+          <div class="legend-item"><div class="legend-dot" style="background:var(--accent2)"></div>EX</div>
+          <div class="legend-item"><div class="legend-dot" style="background:var(--mem-color)"></div>MEM</div>
+          <div class="legend-item"><div class="legend-dot" style="background:var(--load-color)"></div>WB</div>
+          <div class="legend-item"><div class="legend-dot" style="background:var(--accent)"></div>Forwarded</div>
+        </div>
+        <div class="pipeline-svg-wrap">
+          <svg class="pipeline" width="900" height="300" viewBox="0 0 900 300">
+            <defs>
+              <marker id="arr" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto">
+                <path d="M0,0 L8,4 L0,8 Z" fill="var(--accent)"/>
+              </marker>
+            </defs>
+            <!-- Grid lines -->
+            <g opacity="0.15">
+              <line x1="140" y1="0" x2="140" y2="300" stroke="white" stroke-dasharray="4"/>
+              <line x1="240" y1="0" x2="240" y2="300" stroke="white" stroke-dasharray="4"/>
+              <line x1="340" y1="0" x2="340" y2="300" stroke="white" stroke-dasharray="4"/>
+              <line x1="440" y1="0" x2="440" y2="300" stroke="white" stroke-dasharray="4"/>
+              <line x1="540" y1="0" x2="540" y2="300" stroke="white" stroke-dasharray="4"/>
+              <line x1="640" y1="0" x2="640" y2="300" stroke="white" stroke-dasharray="4"/>
+              <line x1="740" y1="0" x2="740" y2="300" stroke="white" stroke-dasharray="4"/>
+              <line x1="840" y1="0" x2="840" y2="300" stroke="white" stroke-dasharray="4"/>
+            </g>
+            <!-- Cycle labels -->
+            <g fill="#556070" font-size="11">
+              <text x="190" y="20" text-anchor="middle">C1</text>
+              <text x="290" y="20" text-anchor="middle">C2</text>
+              <text x="390" y="20" text-anchor="middle">C3</text>
+              <text x="490" y="20" text-anchor="middle">C4</text>
+              <text x="590" y="20" text-anchor="middle">C5</text>
+              <text x="690" y="20" text-anchor="middle">C6</text>
+              <text x="790" y="20" text-anchor="middle">C7</text>
+            </g>
+            <!-- Instruction labels -->
+            <g fill="#c8d0e0" font-size="11">
+              <text x="10" y="65" dominant-baseline="middle">I1: add rax, rbx</text>
+              <text x="10" y="125" dominant-baseline="middle">I2: sub rcx, rax</text>
+              <text x="10" y="185" dominant-baseline="middle">──── needs rax ────</text>
+            </g>
+            <!-- I1 stages -->
+            <rect x="140" y="46" width="100" height="36" rx="2" fill="#1e3a5f" stroke="var(--accent4)" stroke-width="1"/>
+            <text x="190" y="64" text-anchor="middle" fill="var(--accent4)" font-size="11" dominant-baseline="middle">IF</text>
+            <rect x="240" y="46" width="100" height="36" rx="2" fill="#3d2e00" stroke="var(--accent3)" stroke-width="1"/>
+            <text x="290" y="64" text-anchor="middle" fill="var(--accent3)" font-size="11" dominant-baseline="middle">ID</text>
+            <rect x="340" y="46" width="100" height="36" rx="2" fill="#4a0000" stroke="var(--accent2)" stroke-width="2"/>
+            <text x="390" y="64" text-anchor="middle" fill="var(--accent2)" font-size="11" dominant-baseline="middle" font-weight="bold">EX ← result ready</text>
+            <rect x="440" y="46" width="100" height="36" rx="2" fill="#1e3a5f" stroke="var(--mem-color)" stroke-width="1"/>
+            <text x="490" y="64" text-anchor="middle" fill="var(--mem-color)" font-size="11" dominant-baseline="middle">MEM</text>
+            <rect x="540" y="46" width="100" height="36" rx="2" fill="#3d0050" stroke="var(--load-color)" stroke-width="1"/>
+            <text x="590" y="64" text-anchor="middle" fill="var(--load-color)" font-size="11" dominant-baseline="middle">WB</text>
+
+            <!-- I2 stages -->
+            <rect x="240" y="106" width="100" height="36" rx="2" fill="#1e3a5f" stroke="var(--accent4)" stroke-width="1"/>
+            <text x="290" y="124" text-anchor="middle" fill="var(--accent4)" font-size="11" dominant-baseline="middle">IF</text>
+            <rect x="340" y="106" width="100" height="36" rx="2" fill="#3d2e00" stroke="var(--accent3)" stroke-width="1"/>
+            <text x="390" y="124" text-anchor="middle" fill="var(--accent3)" font-size="11" dominant-baseline="middle">ID</text>
+            <!-- EX with forwarding highlight -->
+            <rect x="440" y="106" width="100" height="36" rx="2" fill="#0a3020" stroke="var(--accent)" stroke-width="2"/>
+            <text x="490" y="124" text-anchor="middle" fill="var(--accent)" font-size="11" dominant-baseline="middle" font-weight="bold">EX ← FORWARDED</text>
+            <rect x="540" y="106" width="100" height="36" rx="2" fill="#1e3a5f" stroke="var(--mem-color)" stroke-width="1"/>
+            <text x="590" y="124" text-anchor="middle" fill="var(--mem-color)" font-size="11" dominant-baseline="middle">MEM</text>
+            <rect x="640" y="106" width="100" height="36" rx="2" fill="#3d0050" stroke="var(--load-color)" stroke-width="1"/>
+            <text x="690" y="124" text-anchor="middle" fill="var(--load-color)" font-size="11" dominant-baseline="middle">WB</text>
+
+            <!-- Forwarding arrow -->
+            <path d="M 440,64 C 430,64 420,100 440,114" stroke="var(--accent)" stroke-width="2" fill="none" marker-end="url(#arr)" stroke-dasharray="5,3"/>
+            <text x="405" y="92" fill="var(--accent)" font-size="10" font-weight="bold">FWD</text>
+
+            <!-- Label -->
+            <rect x="140" y="220" width="700" height="50" rx="2" fill="rgba(79,255,176,0.05)" stroke="rgba(79,255,176,0.2)"/>
+            <text x="490" y="242" text-anchor="middle" fill="var(--accent)" font-size="12" font-weight="bold">✓ No stall! Result forwarded EX→EX. I2 runs 2 cycles after I1.</text>
+            <text x="490" y="260" text-anchor="middle" fill="var(--muted)" font-size="11">Without forwarding: I2 would need 2 extra stall cycles waiting for WB.</text>
+          </svg>
+        </div>
+      </div>
+
+      <div class="pipeline-demo">
+        <h3>Load-Use Hazard — 1 stall even with forwarding</h3>
+        <div class="pipeline-svg-wrap">
+          <svg class="pipeline" width="900" height="280" viewBox="0 0 900 280">
+            <defs>
+              <marker id="arr2" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto">
+                <path d="M0,0 L8,4 L0,8 Z" fill="var(--load-color)"/>
+              </marker>
+            </defs>
+            <g opacity="0.15">
+              <line x1="140" y1="0" x2="140" y2="280" stroke="white" stroke-dasharray="4"/>
+              <line x1="240" y1="0" x2="240" y2="280" stroke="white" stroke-dasharray="4"/>
+              <line x1="340" y1="0" x2="340" y2="280" stroke="white" stroke-dasharray="4"/>
+              <line x1="440" y1="0" x2="440" y2="280" stroke="white" stroke-dasharray="4"/>
+              <line x1="540" y1="0" x2="540" y2="280" stroke="white" stroke-dasharray="4"/>
+              <line x1="640" y1="0" x2="640" y2="280" stroke="white" stroke-dasharray="4"/>
+              <line x1="740" y1="0" x2="740" y2="280" stroke="white" stroke-dasharray="4"/>
+            </g>
+            <g fill="#556070" font-size="11">
+              <text x="190" y="20" text-anchor="middle">C1</text>
+              <text x="290" y="20" text-anchor="middle">C2</text>
+              <text x="390" y="20" text-anchor="middle">C3</text>
+              <text x="490" y="20" text-anchor="middle">C4</text>
+              <text x="590" y="20" text-anchor="middle">C5</text>
+              <text x="690" y="20" text-anchor="middle">C6</text>
+              <text x="790" y="20" text-anchor="middle">C7</text>
+            </g>
+            <g fill="#c8d0e0" font-size="11">
+              <text x="10" y="65" dominant-baseline="middle">I1: load rax, [mem]</text>
+              <text x="10" y="125" dominant-baseline="middle">I2: add rbx, rax</text>
+            </g>
+            <!-- Load instruction -->
+            <rect x="140" y="46" width="100" height="36" rx="2" fill="#1e3a5f" stroke="var(--accent4)" stroke-width="1"/>
+            <text x="190" y="64" text-anchor="middle" fill="var(--accent4)" font-size="11" dominant-baseline="middle">IF</text>
+            <rect x="240" y="46" width="100" height="36" rx="2" fill="#3d2e00" stroke="var(--accent3)" stroke-width="1"/>
+            <text x="290" y="64" text-anchor="middle" fill="var(--accent3)" font-size="11" dominant-baseline="middle">ID</text>
+            <rect x="340" y="46" width="100" height="36" rx="2" fill="#4a0000" stroke="var(--accent2)" stroke-width="1"/>
+            <text x="390" y="64" text-anchor="middle" fill="var(--accent2)" font-size="11" dominant-baseline="middle">EX</text>
+            <rect x="440" y="46" width="100" height="36" rx="2" fill="#1e3a5f" stroke="var(--mem-color)" stroke-width="2"/>
+            <text x="490" y="57" text-anchor="middle" fill="var(--mem-color)" font-size="11" font-weight="bold">MEM</text>
+            <text x="490" y="72" text-anchor="middle" fill="var(--mem-color)" font-size="10">data ready here</text>
+            <rect x="540" y="46" width="100" height="36" rx="2" fill="#3d0050" stroke="var(--load-color)" stroke-width="1"/>
+            <text x="590" y="64" text-anchor="middle" fill="var(--load-color)" font-size="11" dominant-baseline="middle">WB</text>
+
+            <!-- Stall bubble -->
+            <rect x="340" y="106" width="100" height="36" rx="2" fill="#1a1a1a" stroke="#333" stroke-width="1" stroke-dasharray="4"/>
+            <text x="390" y="124" text-anchor="middle" fill="#444" font-size="11" dominant-baseline="middle">STALL</text>
+
+            <!-- I2 shifted by 1 -->
+            <rect x="240" y="106" width="100" height="36" rx="2" fill="#1e3a5f" stroke="var(--accent4)" stroke-width="1"/>
+            <text x="290" y="124" text-anchor="middle" fill="var(--accent4)" font-size="11" dominant-baseline="middle">IF</text>
+            <rect x="440" y="106" width="100" height="36" rx="2" fill="#3d2e00" stroke="var(--accent3)" stroke-width="1"/>
+            <text x="490" y="124" text-anchor="middle" fill="var(--accent3)" font-size="11" dominant-baseline="middle">ID</text>
+            <rect x="540" y="106" width="100" height="36" rx="2" fill="#0a3020" stroke="var(--accent)" stroke-width="2"/>
+            <text x="590" y="124" text-anchor="middle" fill="var(--accent)" font-size="11" dominant-baseline="middle" font-weight="bold">EX ← FORWARDED</text>
+            <rect x="640" y="106" width="100" height="36" rx="2" fill="#1e3a5f" stroke="var(--mem-color)" stroke-width="1"/>
+            <text x="690" y="124" text-anchor="middle" fill="var(--mem-color)" font-size="11" dominant-baseline="middle">MEM</text>
+
+            <!-- Forwarding arrow MEM→EX -->
+            <path d="M 540,64 C 530,64 520,110 540,120" stroke="var(--load-color)" stroke-width="2" fill="none" marker-end="url(#arr2)" stroke-dasharray="5,3"/>
+            <text x="500" y="94" fill="var(--load-color)" font-size="10" font-weight="bold">MEM→EX FWD</text>
+
+            <rect x="140" y="200" width="700" height="50" rx="2" fill="rgba(232,121,249,0.05)" stroke="rgba(232,121,249,0.2)"/>
+            <text x="490" y="222" text-anchor="middle" fill="var(--load-color)" font-size="12" font-weight="bold">⚠ 1 stall required — load data not ready until end of MEM</text>
+            <text x="490" y="240" text-anchor="middle" fill="var(--muted)" font-size="11">Forwarding helps here, but 1 cycle bubble is unavoidable.</text>
+          </svg>
+        </div>
+      </div>
+
+      <!-- Live forwarding events from data -->
+      <div class="chart-card" style="margin-top:0">
+        <div class="chart-title">Forwarding Events in Your Run</div>
+        <div id="fwd-event-details" style="font-size:12px;color:var(--muted);line-height:2"></div>
+      </div>
+    </div>
+  </div><!-- /tab-forwarding -->
+
+  <!-- TAB: INSTRUCTION LOG -->
+  <div class="tab-pane" id="tab-log">
+    <div class="log-controls">
+      <span style="font-size:11px;color:var(--muted);margin-right:8px;">FILTER:</span>
+      <button class="filter-btn active" onclick="setFilter('all',this)">ALL</button>
+      <button class="filter-btn" onclick="setFilter('fwd',this)">⚡ FORWARDED</button>
+      <button class="filter-btn" onclick="setFilter('datastall',this)">🔴 DATA STALLS</button>
+      <button class="filter-btn" onclick="setFilter('ctrl',this)">🟡 CONTROL STALLS</button>
+      <button class="filter-btn" onclick="setFilter('loaduse',this)">🟣 LOAD-USE</button>
+      <button class="filter-btn" onclick="setFilter('mem',this)">🔵 MEMORY</button>
+      <span style="margin-left:auto;font-size:11px;color:var(--muted)" id="log-count">— instructions</span>
+    </div>
+    <div class="log-table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>CYCLE</th>
+            <th>INSTRUCTION</th>
+            <th>DATA STALL</th>
+            <th>CTRL STALL</th>
+            <th>FLAGS</th>
+          </tr>
+        </thead>
+        <tbody id="log-body"></tbody>
+      </table>
+    </div>
+  </div><!-- /tab-log -->
+</div><!-- /main -->
+
+<script>
+// ── Data storage ─────────────────────────────────────────────────────────────
+let dataWith = null;
+let dataWithout = null;
+let currentFilter = 'all';
+
+// ── Embedded demo data from the actual run ────────────────────────────────────
+const DEMO_WITH = {"summary":{"totalInstructions":167705,"totalCycles":317963,"dataStalls":85600,"loadUseStalls":751,"forwardingEvents":39158,"controlStalls":64658,"memoryAccesses":79090,"totalStalls":150258,"cpi":1.89597}};
+const DEMO_WITHOUT = {"summary":{"totalInstructions":167750,"totalCycles":384897,"dataStalls":152473,"loadUseStalls":1048,"forwardingEvents":0,"controlStalls":64674,"memoryAccesses":79088,"totalStalls":217147,"cpi":2.29447}};
+
+// We'll embed the instruction log from the window if available
+let embeddedInstructions = null;
+
+// ── File loading ──────────────────────────────────────────────────────────────
+function handleFiles(e) {
+  const files = Array.from(e.target.files);
+  let pending = files.length;
+  files.forEach(f => {
+    const r = new FileReader();
+    r.onload = ev => {
+      try {
+        const d = JSON.parse(ev.target.result);
+        if (d.mode === 'without_forwarding' || f.name.includes('without')) {
+          dataWithout = d;
+        } else {
+          dataWith = d;
+        }
+      } catch(err) { console.error('Parse error:', err); }
+      pending--;
+      if (pending === 0) render();
+    };
+    r.readAsText(f);
+  });
+}
+
+function loadDemo() {
+  dataWith = DEMO_WITH;
+  dataWithout = DEMO_WITHOUT;
+  // Try to load instructions from embedded data
+  render();
+}
+
+// ── Rendering ─────────────────────────────────────────────────────────────────
+function render() {
+  if (!dataWith || !dataWithout) {
+    alert('Please load both JSON files!');
+    return;
+  }
+  document.getElementById('landing').style.display = 'none';
+  document.getElementById('main').style.display = 'block';
+
+  const s = dataWith.summary;
+  const w = dataWithout.summary;
+
+  // Hero
+  document.getElementById('cpi-wf').textContent  = w.cpi.toFixed(4);
+  document.getElementById('cpi-wt').textContent  = s.cpi.toFixed(4);
+  document.getElementById('cycles-wf').textContent = fmt(w.totalCycles);
+  document.getElementById('cycles-wt').textContent = fmt(s.totalCycles);
+  document.getElementById('dstalls-wf').textContent = fmt(w.dataStalls);
+  document.getElementById('dstalls-wt').textContent = fmt(s.dataStalls);
+  document.getElementById('lustalls-wf').textContent = fmt(w.loadUseStalls);
+  document.getElementById('lustalls-wt').textContent = fmt(s.loadUseStalls);
+  document.getElementById('cstalls-wf').textContent = fmt(w.controlStalls);
+  document.getElementById('cstalls-wt').textContent = fmt(s.controlStalls);
+  document.getElementById('fwd-events').textContent = fmt(s.forwardingEvents);
+
+  const speedup = w.cpi / s.cpi;
+  document.getElementById('speedup-val').textContent = speedup.toFixed(2) + '×';
+  const savedCyc = w.totalCycles - s.totalCycles;
+  document.getElementById('saved-cycles-mini').textContent = fmt(savedCyc);
+
+  // Savings
+  const savedStalls = w.dataStalls - s.dataStalls;
+  const savedCPI = w.cpi - s.cpi;
+  const pctImprove = ((w.totalCycles - s.totalCycles) / w.totalCycles * 100);
+  document.getElementById('save-stalls').textContent = fmt(savedStalls);
+  document.getElementById('save-cycles').textContent = fmt(savedCyc);
+  document.getElementById('save-cpi').textContent = savedCPI.toFixed(3);
+  document.getElementById('save-pct').textContent = pctImprove.toFixed(1) + '%';
+
+  // CPI bars
+  document.getElementById('cpi-wf2').textContent = w.cpi.toFixed(4);
+  document.getElementById('cpi-wt2').textContent = s.cpi.toFixed(4);
+  const maxCPI = Math.max(w.cpi, s.cpi) * 1.05;
+  setTimeout(() => {
+    document.getElementById('bar-cpi-wf').style.width = (w.cpi/maxCPI*100) + '%';
+    document.getElementById('bar-cpi-wt').style.width = (s.cpi/maxCPI*100) + '%';
+  }, 100);
+  document.getElementById('cpi-improv-text').innerHTML =
+    `CPI reduced by <strong style="color:var(--accent)">${savedCPI.toFixed(3)}</strong> — that's a <strong style="color:var(--accent)">${pctImprove.toFixed(1)}%</strong> runtime improvement just from forwarding hardware`;
+
+  // Stall breakdown (with fwd)
+  const bd = document.getElementById('stall-breakdown');
+  const maxSt = Math.max(s.dataStalls, s.loadUseStalls, s.controlStalls, s.forwardingEvents);
+  bd.innerHTML = makeBar('Data Stalls', s.dataStalls, maxSt, 'stall') +
+    makeBar('Load-Use Stalls', s.loadUseStalls, maxSt, 'load') +
+    makeBar('Control Stalls', s.controlStalls, maxSt, 'ctrl') +
+    makeBar('Forwarding Events', s.forwardingEvents, maxSt, 'fwd');
+
+  // Data stall compare
+  const dsc = document.getElementById('datastall-compare');
+  const mxD = Math.max(w.dataStalls, s.dataStalls);
+  dsc.innerHTML = makeBar('Without Forwarding', w.dataStalls, mxD, 'stall') +
+    makeBar('With Forwarding', s.dataStalls, mxD, 'fwd') +
+    makeBar('Stalls Eliminated', w.dataStalls - s.dataStalls, mxD, 'mem');
+
+  // Profile chart
+  const pc = document.getElementById('profile-chart');
+  const mxP = Math.max(s.totalInstructions, s.memoryAccesses, s.forwardingEvents, s.totalStalls);
+  pc.innerHTML = makeBar('Instructions', s.totalInstructions, mxP, 'mem') +
+    makeBar('Memory Accesses', s.memoryAccesses, mxP, 'ctrl') +
+    makeBar('Forwarding Events', s.forwardingEvents, mxP, 'fwd') +
+    makeBar('Total Stalls', s.totalStalls, mxP, 'stall');
+
+  setTimeout(animateBars, 200);
+
+  // Forwarding explainer details
+  const fwdEl = document.getElementById('fwd-event-details');
+  const pctFwd = (s.forwardingEvents / s.totalInstructions * 100).toFixed(1);
+  const pctSaved = ((w.dataStalls - s.dataStalls) / w.dataStalls * 100).toFixed(1);
+  fwdEl.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:20px">
+      <div style="background:var(--bg3);padding:16px;border-left:3px solid var(--accent)">
+        <div style="font-size:24px;font-weight:700;color:var(--accent)">${fmt(s.forwardingEvents)}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px">forwarding events detected</div>
+      </div>
+      <div style="background:var(--bg3);padding:16px;border-left:3px solid var(--accent3)">
+        <div style="font-size:24px;font-weight:700;color:var(--accent3)">${pctFwd}%</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px">of instructions used forwarding</div>
+      </div>
+      <div style="background:var(--bg3);padding:16px;border-left:3px solid var(--fwd-color)">
+        <div style="font-size:24px;font-weight:700;color:var(--fwd-color)">${pctSaved}%</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px">of data stalls eliminated</div>
+      </div>
+    </div>
+    <div style="color:var(--muted);line-height:2">
+      Your program had <span style="color:#fff">${fmt(w.dataStalls)}</span> data hazard stalls without forwarding.<br/>
+      Forwarding hardware reduced this to <span style="color:var(--accent)">${fmt(s.dataStalls)}</span>, 
+      saving <span style="color:var(--accent)">${fmt(w.dataStalls - s.dataStalls)}</span> stall cycles.<br/>
+      Load-use hazards (<span style="color:var(--load-color)">${fmt(s.loadUseStalls)}</span>) still require 1 stall cycle — forwarding can't help here because<br/>
+      the memory read completes too late in the MEM stage to be forwarded in time.
+    </div>
+  `;
+
+  // Render log if instructions available
+  if (dataWith.instructions) renderLog(dataWith.instructions);
+}
+
+function makeBar(label, val, max, cls) {
+  const pct = max > 0 ? (val/max*100) : 0;
+  return `<div class="bar-row">
+    <div class="bar-label">${label}</div>
+    <div class="bar-track">
+      <div class="bar-fill ${cls}" data-pct="${pct.toFixed(1)}" style="width:0%"></div>
+    </div>
+    <div class="bar-val">${fmt(val)}</div>
+  </div>`;
+}
+
+function animateBars() {
+  document.querySelectorAll('.bar-fill').forEach(b => {
+    b.style.width = b.dataset.pct + '%';
+  });
+}
+
+// ── Instruction log ───────────────────────────────────────────────────────────
+function renderLog(instructions) {
+  const tbody = document.getElementById('log-body');
+  const filtered = filter(instructions);
+  document.getElementById('log-count').textContent = filtered.length + ' / ' + instructions.length + ' instructions';
+
+  tbody.innerHTML = filtered.map(instr => {
+    let rowClass = '';
+    if (instr.dataStall > 0 && !instr.forwarded) rowClass = 'has-stall';
+    else if (instr.forwarded) rowClass = 'has-fwd';
+    if (instr.ctrlStall > 0) rowClass = 'has-ctrl';
+    if (instr.loadUse) rowClass = 'has-load';
+
+    const flags = [];
+    if (instr.forwarded) flags.push('<span class="badge fwd">⚡ FWD</span>');
+    if (instr.loadUse)   flags.push('<span class="badge load">↓ LOAD-USE</span>');
+    if (instr.isBranch)  flags.push('<span class="badge ctrl">⑂ BRANCH</span>');
+    if (instr.isMemory)  flags.push('<span class="badge mem">◉ MEM</span>');
+
+    return `<tr class="${rowClass}">
+      <td style="color:var(--muted)">${instr.id}</td>
+      <td style="color:var(--accent3)">${instr.cycle}</td>
+      <td style="color:#fff;font-family:'JetBrains Mono',monospace">${instr.label}</td>
+      <td>${instr.dataStall > 0 ? `<span style="color:var(--stall-color)">+${instr.dataStall}</span>` : '<span style="color:var(--muted)">—</span>'}</td>
+      <td>${instr.ctrlStall > 0 ? `<span style="color:var(--ctrl-color)">+${instr.ctrlStall}</span>` : '<span style="color:var(--muted)">—</span>'}</td>
+      <td style="display:flex;gap:4px;flex-wrap:wrap">${flags.join('') || '<span style="color:var(--muted);font-size:11px">—</span>'}</td>
+    </tr>`;
+  }).join('');
+}
+
+function filter(instructions) {
+  if (currentFilter === 'all') return instructions;
+  if (currentFilter === 'fwd') return instructions.filter(i => i.forwarded);
+  if (currentFilter === 'datastall') return instructions.filter(i => i.dataStall > 0 && !i.forwarded);
+  if (currentFilter === 'ctrl') return instructions.filter(i => i.ctrlStall > 0);
+  if (currentFilter === 'loaduse') return instructions.filter(i => i.loadUse);
+  if (currentFilter === 'mem') return instructions.filter(i => i.isMemory);
+  return instructions;
+}
+
+function setFilter(f, btn) {
+  currentFilter = f;
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  if (dataWith && dataWith.instructions) renderLog(dataWith.instructions);
+}
+
+// ── Tab switching ─────────────────────────────────────────────────────────────
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  const tabs = document.querySelectorAll('.tab');
+  const idx = ['compare','forwarding','log'].indexOf(name);
+  if (tabs[idx]) tabs[idx].classList.add('active');
+  if (name === 'compare') setTimeout(animateBars, 100);
+}
+
+// ── Utils ─────────────────────────────────────────────────────────────────────
+function fmt(n) {
+  if (n === undefined || n === null) return '—';
+  return Number(n).toLocaleString();
+}
+
+// ── Header load button ────────────────────────────────────────────────────────
+document.querySelector('.load-btn').onclick = () => {
+  document.getElementById('fileInput').click();
+};
+</script>
+</body>
+</html>
